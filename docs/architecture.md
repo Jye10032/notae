@@ -6,20 +6,29 @@
 
 ## 1. 这是什么
 
-一个本地优先的 CLI 工具：把你看不懂的材料交给它，它按你的思维习惯重新组织语言讲一遍，
-并把解读、当时的困惑点、原文存档三者绑在一起沉淀下来。
+一个本地优先的 CLI：你指着一段看不懂的材料，说哪儿不懂，
+它按你的思维习惯重新组织语言讲一遍，然后把
+**引用坐标**、**困住你的那段摘录**、**解读**三者写成一份笔记。
 
-**不是笔记应用。** 笔记是副产品。核心价值是"按个人学习习惯重讲一遍"这个动作，
-以及三个月后回看时能一键跳回当时看不懂的原文、并看到当时的困惑点。
+### 三条边界
 
-**不是 RAG 问答。** 不做"把你的库全读一遍然后回答问题"。是你指着哪儿，它讲哪儿。
+**不存原文。** 读取和存储是两个独立决策：解读时把原文放进 context（transient），
+落盘只留引用 + 摘录 + 笔记。展开见 §2.2。
+
+**不是笔记应用。** 笔记是副产品。核心价值是「按个人学习习惯重讲一遍」这个动作，
+以及三个月后回看时能看到当时的困惑、和当时困住你的那段原文。
+
+**不是 RAG 阅读器。** 不做"把你的库全读一遍然后回答问题"。
+一旦开始囤积全文语料，用户就会期待全库检索，
+而那是另一个产品（Khoj / Karakeep / NotebookLM 那一类）。
 
 ### 形态决策
 
-- **本地优先**：所有内容存在用户自己的磁盘上，纯 markdown + frontmatter。
-- **可移植**：删掉本工具，笔记仍然是笔记，Obsidian 能直接打开。
-  这是"不怕上传到别人平台后无法复用"这个顾虑的正面回答。
-- **CLI**：有真实文件系统和真实工具链（ripgrep、sqlite、git）可用，
+- **本地优先**：纯 Markdown + frontmatter，Obsidian 直接可读。
+  删掉本工具，笔记仍然是笔记。这是"不怕依赖别人平台"的正面回答。
+- **笔记自洽**：源链接失效、本地文件移动、原文被改动，
+  笔记依然完整可读——因为摘录就在笔记里。
+- **CLI**：有真实文件系统和工具链（ripgrep、sqlite、git）可用，
   很多事情用代码做比用 LLM 做又快又免费。
 
 ## 2. 核心设计原则
@@ -32,20 +41,27 @@
 
 理由：用户不理解的东西通常很短——一段话、一个公式、一个函数、论文里的某一节。
 真正烧 token 的不是解读，是围绕它的基础设施。Pull 模式同时解决三件事：
-token 省了、首次体验快了（几秒看到一段有用的解释，而不是等五分钟 ingest）、
+token 省了、首次体验快了（几秒看到一段有用的解释，而不是等五分钟导入）、
 亮点也更集中。
 
-### 2.2 存档免费，理解付费
+### 2.2 引用免费，理解付费
 
-`add` 命令一个 LLM 都不调。抓取、正文提取、切块、算 hash、生成骨架，全部用代码做。
+只落盘引用坐标、摘录、笔记，不落盘原文。
 
-理由：存档是零成本操作，用户才敢往里扔东西。"导入要花钱"会直接杀死使用频率，
-而使用频率是这个产品唯一的生死线。
+理由有三层。**产品上**，存全文会把工具推向文档管理系统，
+而「页边注」这个形态更锋利——notae 这个词的本义里就不包含整本书的副本。
+**复杂度上**，不存原文直接消掉了抓取、正文提取、无头浏览器兜底、
+切片、chunk id、漂移检测、源文件冻结规则这一整条链。
+**质量上**，分块检索会让模型看不到前文定义的记号，
+而难懂的段落恰恰因为依赖前文才难懂——那等于重新制造本产品要解决的问题。
+
+代价是链接腐烂：网页会改、会加墙、会消失。**摘录就是为这个而存在的**，
+它不是可选项。你当时困住的就是那一段，不是整篇；存了它，笔记就自洽。
 
 ### 2.3 能用代码就不用模型，能用小模型就不用大模型
 
-- 代码做：切块、TOC 提取、hash、去重、链接图维护、index 生成、frontmatter 读写、token 记账。
-- Haiku 做：分类打标签、triage 哪几节是难点、概念页的机械合并。
+- 代码做：引用解析、摘录落盘、frontmatter 读写、index 生成、链接图维护、token 记账。
+- Haiku 做：标题/标签生成、slug 生成、概念页的机械合并。
 - Opus 做：**只有真正的重讲**。
 
 理由：亮点全在重讲那一步，那里不能省；其余地方省下来的钱都补贴到那一步。
@@ -57,10 +73,11 @@ token 省了、首次体验快了（几秒看到一段有用的解释，而不�
 
 ### 2.5 manifest 是缓存，不是权威
 
-`.notae/manifest.db` 必须能从文件完全重建（`notae reindex`）。删掉它不丢任何数据。
+`.notae/manifest.db` 必须能从笔记文件完全重建（`notae reindex`）。
+删掉它不丢任何数据。
 
-理由：这是 §1 里"可移植"承诺的技术保证。同时它让
-"哪些笔记过期了""这个 chunk 解读过吗""这个月花了多少 token"
+理由：这是"本地优先、可移植"承诺的技术保证。同时它让
+"这段摘录解读过吗""这个月花了多少 token""哪些笔记该复习了"
 这类查询用 SQL 零 token 完成，而不是靠扫文件或者问模型。
 
 ## 3. 目录规范
@@ -70,118 +87,88 @@ token 省了、首次体验快了（几秒看到一段有用的解释，而不�
 ```
 vault/
   .notae/                   # 工具私有，用户不碰
-    manifest.db             # sqlite：sources / chunks / notes / links / hashes / token 账本
+    manifest.db             # sqlite：notes / refs / excerpts / links / token 账本
     log.jsonl               # append-only 事件流，可 grep
-    cache/                  # 骨架、embedding（可选）
-    config.toml             # 模型选择、预算上限、抓取策略
+    config.toml             # 模型选择、预算上限、fetch 策略
+    cache/                  # 可选：临时抓取缓存，可随时清空
 
-  profile/                  # 用户拥有
+  profile/
     learning-profile.md     # 学习习惯画像，人机共写
-    conventions.md          # schema，等价于 CLAUDE.md
+    conventions.md          # 笔记写作约定，等价于 CLAUDE.md
 
-  sources/                  # 写入后不可变
-    2026/09/<slug>/
-      raw.md                # 正文，纯文本
-      meta.yaml             # 来源、抓取时间、hash、chunk 数
-      skeleton.yaml         # 代码生成的结构骨架（标题树 + 每块首句 + token 数）
-      assets/               # 图片等本地附件
+  notes/                    # 核心产物，一条笔记一个文件
+    attention-scaling.md
+    <你自己建的子目录>/      # 工具保留结构，不改名不移动
+      ...
 
-  notes/                    # 工具生成
-    <slug>/
-      explain.md            # 解读正文
-      confusion.md          # 当时的困惑点 + 引用的 chunk id
-
-  concepts/                 # 跨源的概念页（v2，MVP 不做）
-  inbox/                    # 用户手动扔文件的地方，随便建子目录
-  index.md                  # 生成物，一行一页
+  concepts/                 # 跨笔记的概念页（v2，MVP 不做）
+  assets/                   # 笔记里手动插入的图片
+  index.md                  # 生成物，一行一条笔记
 ```
+
+没有 `sources/`，没有 `inbox/`。原文不进仓库，
+要处理的东西直接用路径或 URL 指给 `notae explain`。
 
 ### 3.2 所有权边界
 
-| 目录 | 谁写 | 可变性 | 说明 |
-|---|---|---|---|
-| `.notae/` | 工具 | 可变 | 用户不应手改；删掉可用 `reindex` 重建 |
-| `profile/` | 用户 + 工具 | 可变 | 工具只在 `profile learn` 时追加，不删用户写的内容 |
-| `sources/` | 工具（仅 add 时） | **写入后不可变** | 之后永不修改，这是引用稳定性的前提 |
-| `notes/` | 工具 | 可变 | 重新 explain 会覆盖，历史交给 git |
-| `concepts/` | 工具 | 可变 | |
-| `inbox/` | 用户 | 可变 | 工具只读，不改名、不移动 |
-| `index.md` | 工具 | 生成物 | 手改会被覆盖 |
+| 目录 | 谁写 | 说明 |
+|---|---|---|
+| `.notae/` | 工具 | 用户不应手改；删掉可用 `reindex` 重建 |
+| `profile/` | 用户 + 工具 | 工具只在 `profile learn` 时追加，不删用户写的内容 |
+| `notes/` | 工具 + 用户 | 工具生成，用户可自由编辑和重组目录 |
+| `concepts/` | 工具 | |
+| `assets/` | 用户 | 工具只读 |
+| `index.md` | 工具 | 生成物，手改会被覆盖 |
 
-两条硬规则：
+一条硬规则：**用户在 `notes/` 下建的任何子目录，工具不改名、不移动、不删除。**
+index 按实际路径生成，不强制扁平结构。
 
-1. **工具只写 `.notae/`、`notes/`、`concepts/`、`index.md`。**
-   用户建的任何文件夹，工具不改名、不移动、不删除。
-   需要纳管时通过 `notae adopt <path>` 显式操作。
-2. **`sources/` 写入即冻结。** 重新抓取同一 URL 生成新的 slug（带日期后缀），
-   不覆盖旧的。这样 chunk id 永久有效，三个月前的笔记引用不会失效。
+上一版有条"`sources/` 写入即冻结"规则，现已删除——
+它存在的唯一理由是保持 chunk id 有效，而 chunk 已经不存在了。
 
-这两条撑到 500 个源不会乱。
+## 4. 笔记格式
 
-## 4. 文件格式约定
+一条笔记一个文件，自包含。这是全项目唯一需要约定的格式。
 
-### 4.1 `sources/<slug>/meta.yaml`
-
-```yaml
-id: 2026/09/attention-is-all-you-need
-title: Attention Is All You Need
-origin: https://arxiv.org/abs/1706.03762
-kind: paper            # paper | article | code | book | paste
-fetched: 2026-09-29T14:10:00+08:00
-content_hash: sha256:9f2a...
-chunks: 42
-tokens_est: 15200
-```
-
-### 4.2 `sources/<slug>/skeleton.yaml`
-
-**代码生成，不调模型。** 这是省 token 的关键载体：
-骨架进 context（一篇 20 页论文大概 300 token），模型再按需取具体块。
-
-```yaml
-chunks:
-  - id: c01
-    path: "1 Introduction"
-    lead: "Recurrent neural networks, long short-term memory..."
-    tokens: 312
-    hash: sha256:1a2b...
-  - id: c07
-    path: "3.2.1 Scaled Dot-Product Attention"
-    lead: "We call our particular attention Scaled Dot-Product..."
-    tokens: 285
-    hash: sha256:4c5d...
-```
-
-chunk id 按顺序稳定分配（`c01`..`cNN`），带 hash 以便检测原文漂移。
-
-### 4.3 `notes/<slug>/explain.md`
-
-```yaml
+```markdown
 ---
-source: 2026/09/attention-is-all-you-need
-chunks: [c07, c08]          # 本次解读实际引用的原文块
-profile_version: 3          # 生成时用的画像版本，画像更新后可据此标记过期
+title: 为什么 Scaled Dot-Product Attention 要除以 sqrt(d_k)
+ref:
+  kind: web                       # web | file | paste
+  url: https://arxiv.org/abs/1706.03762
+  fetched: 2026-09-29T14:10:00+08:00
+  # kind: file 时改用：
+  # path: ~/papers/attention.pdf
+  # locator: "p.4 §3.2.1"         # 人可读的定位，不追求机器精确
+confused: 为什么 QK^T 要除以 sqrt(d_k)
+excerpt: |
+  We suspect that for large values of d_k, the dot products grow large in
+  magnitude, pushing the softmax function into regions where it has
+  extremely small gradients.
+profile_version: 3                # 画像版本，更新后可据此标记旧笔记
 model: claude-opus-5
 created: 2026-09-29T14:22:00+08:00
-tokens: { in: 2431, out: 1180, cached: 890 }
+tokens: { in: 14200, out: 1180, cached: 890 }
+revisit_after: 2026-10-29         # 间隔重复钩子，可选
 ---
+
+## 解读
+
+（按 learning-profile 组织的重讲正文）
+
+## 我当时卡在哪
+
+（困惑点的展开，以及为什么会卡在这里）
 ```
 
-### 4.4 `notes/<slug>/confusion.md`
+三个设计要点：
 
-这个文件是产品差异化的落点，成本几乎为零——它是 explain 的副产品。
-
-```yaml
----
-asked: "为什么 QK^T 要除以 sqrt(d_k)"
-chunks: [c07]
-resolved: true
-revisit_after: 2026-10-29    # 间隔重复的钩子
----
-```
-
-`notae recall` 读这两个 frontmatter，用代码把原文段落拼回来并排展示。
-零额外 token。
+1. **`excerpt` 是必填项。** 它是笔记自洽的全部依据。
+   源失效后 `recall` 仍能工作，`explain` 也能在只有摘录的降级模式下重跑。
+2. **摘录不需要用户手工摘。** 模型解读时本来就要引用它在讲哪一段，
+   把这个引用落盘即可，用户零额外动作。
+3. **`locator` 是人可读的，不是机器精确的。** 本地文件的行号会随编辑漂移，
+   追求精确定位性价比低；摘录已经提供了内容级锚点。
 
 ## 5. Token 策略
 
@@ -189,63 +176,67 @@ revisit_after: 2026-10-29    # 间隔重复的钩子
 
 | 环节 | 成本特征 | 对策 |
 |---|---|---|
-| ingest 存档 | 与源大小成正比 | 全部用代码做，**零 token** |
-| explain 解读 | 与"看不懂的那一小段"成正比 | 唯一花钱的地方，不省 |
-| 追问迭代 | 低，只要 context 里只留相关块 | 画像走 prompt cache |
-| query 检索 | 天然随库增长 | 本地检索选候选，只给模型 3–5 页 |
-| lint 维护 | naive 实现近似二次增长 | 只查 dirty set + 一跳邻居 |
+| `explain` 读原文 | 与源大小成正比，**唯一的大头** | 整篇读、不切块；见 §5.2 |
+| 同一源追问 | 低 | 走 prompt cache |
+| `recall` | **零 token** | 纯代码读 frontmatter |
+| index / 链接维护 | **零 token** | 纯代码 |
+| 跨天重新解读 | 需要重新 fetch | 见 §8 待定项 |
 
 ### 5.2 具体手段
 
-1. **给模型工具，而不是给它正文。**
-   骨架进 context，暴露 `read_chunk(source, chunk_id)` 让模型自己决定读哪几块。
-   长文省 85% 以上，且解读质量不降——它本来也只需要那几段。
-2. **本地检索前置。** 用 ripgrep / sqlite FTS 在本地筛出候选页，
-   而不是把 `index.md` 整个塞进 context。这是 CLI 形态相对纯 markdown 约定的主要优势。
-3. **画像做成 prompt cache 前缀。** `learning-profile.md` + `conventions.md` 跨调用稳定，
-   放在缓存前缀里按折扣计费。注意默认 TTL 只有 5 分钟（有 1 小时选项），
+1. **整篇读，不切块。** 典型文章 1–3k token，20 页论文约 15k，
+   而上下文窗口是 20 万级。对这个量级做骨架 + 按块取属于净开销，
+   还会牺牲解读质量（模型看不到前文定义的记号）。
+   只有超阈值的长源才需要特殊处理，见 §8。
+2. **画像做成 prompt cache 前缀。** `learning-profile.md` + `conventions.md`
+   跨调用稳定，放在缓存前缀里按折扣计费。注意默认 TTL 只有 5 分钟（有 1 小时选项），
    所以它在"一次连续深挖"里省得多，跨天帮助有限——
    交互设计上应鼓励单次深挖而非零散提问。
-4. **hash 级幂等。** 解读过的 chunk 不再付第二次钱，换个问法追问只付新增部分。
-5. **模型分层。** 见 §2.3。
-6. **增量 lint。** dirty set 记在 manifest 里，全库扫描永不默认执行。
-7. **token 账本。** 每次调用写入 manifest，`notae cost` 可查。
+3. **摘录级幂等。** 同一段摘录已解读过就复用，换个问法追问只付新增部分。
+   判定用摘录内容的 hash，记在 manifest。
+4. **模型分层。** 见 §2.3。
+5. **本地检索前置。** `ask` 类命令用 ripgrep / sqlite FTS 在本地筛出候选笔记，
+   只把 3–5 篇给模型，而不是把 `index.md` 整个塞进 context。
+6. **token 账本。** 每次调用写入 manifest，`notae cost` 可查。
    预算上限写在 `config.toml`，超了先问再跑。
 
-### 5.3 估算示例
+### 5.3 待验证
 
-一篇 20 页论文约 15k token。以下是估算，**未实测**：
+上一版写过一组"省 85%"的估算，依据的是分块机制，现已失效。
+新设计下真实成本就是"每次 explain 读一次源"，没什么可优化的空间——
+**这正是要先量的原因**：
 
-- 朴素做法：每次提问把全文喂给 Opus → 15k 输入 × N 次。
-- 本设计：存档 0 token；骨架用代码生成；用户问第 3 节 →
-  1.5k 原文块 + 1k 画像（走缓存）→ 约 2.5k。
-- 首次约省 85%，后续因画像缓存 + chunk 复用可到 95%。
+- 你的源的 token 分布长什么样？如果 90% 在 5k 以下，任何分块机制都不该存在。
+- 一次典型深挖（一次 explain + 三四次追问）的总成本是多少？
+- prompt cache 命中率在真实使用节奏下有多少？
 
-这组数字需要在真实材料上验证，是 MVP 阶段要收的第一个指标。
+这三个数字要用真实材料跑一周才知道，是 MVP 阶段的第一批指标。
+在拿到它们之前不做任何 token 优化。
 
 ## 6. 命令面
 
-### MVP：三个命令
+### MVP：两个命令
 
 ```bash
-notae add <url|file|->                # 免费存档 + 生成骨架
-notae explain <ref> --confused "…"    # 核心，贵模型，唯一花钱的地方
-notae recall <note>                   # 笔记 ↔ 原文双向跳转，零 token
+notae explain <url|file|-> --confused "…"   # 核心，唯一花钱的地方
+notae recall <note>                         # 笔记 + 摘录 + 引用，零 token
 ```
 
-`--confused` 是可选的。不给就让模型自己 triage 难点（Haiku 一次）；
-给了就直接定位，更省也更准。
+上一版有个 `add` 命令，职责是填充归档层。不存原文之后归档层不存在了，
+`add` 随之消失——核心循环塌缩成一条命令，也少了一个"我得先导入"的摩擦点。
+
+`--confused` 可选。不给就让模型自己判断难点；给了就直接定位，更省也更准。
 
 ### v2 及以后
 
 ```bash
 notae init                            # 初始化 vault
-notae ask "…"                         # 跨源提问，本地检索 + 引用
-notae profile learn                   # 从反馈更新画像
+notae ls [--tag …]                    # 列笔记
+notae ask "…"                         # 跨笔记提问，本地检索 + 引用
 notae profile bootstrap               # 冷启动：从用户自己的讲解里提取画像
-notae adopt <path>                    # 纳管用户手建的目录
-notae reindex                         # 从文件重建 manifest
-notae lint [--incremental]            # 查矛盾、过期、孤立页
+notae profile learn                   # 从反馈持续更新画像
+notae reindex                          # 从笔记文件重建 manifest
+notae lint                            # 查矛盾、过期、孤立笔记
 notae cost [--month]                  # token 账本
 ```
 
@@ -268,20 +259,31 @@ notae cost [--month]                  # token 账本
 
 ## 8. 待定问题
 
-- [x] ~~命名~~ → **notae**，见 [naming.md](./naming.md)。
-      `explain` 保留给核心子命令，不占产品名。
+- [ ] **技术栈：Node 还是 Python。** 会同时影响 fetch 方案和分发方式，优先级最高。
+- [ ] 跨天重新解读要不要重新 fetch？源已失效时降级到只用摘录——降级要不要提示用户？
+- [ ] 超长源（书、大型 spec、整个代码库）的阈值定在哪，超了之后怎么处理？
+      倾向于：先不支持，报错并建议用户自己节选。等真实需求出现再说。
+- [ ] 摘录由模型引用落盘，但模型可能引偏。要不要让用户确认一次？
+- [ ] `note` 的 slug 生成规则与重名冲突处理。
 - [ ] 画像的 schema：自由文本 markdown 还是结构化字段？
       自由文本更灵活但难做版本比对，结构化反之。
 - [ ] `profile_version` 变更后，旧笔记标记为过期还是静默保留？
-- [ ] 切块策略：按标题层级、按 token 窗口、还是混合？代码类材料要不要按 AST？
-- [ ] 抓取用什么：readability 类库够不够，还是需要无头浏览器兜底？
 - [ ] 间隔重复（`revisit_after`）要不要进 MVP？倾向不进，先验证核心闭环。
+- [x] ~~切块策略~~ → 不切块，见 §5.2。
+- [x] ~~命名~~ → **notae**，见 [naming.md](./naming.md)。
+      `explain` 保留给核心子命令，不占产品名。
+- [x] ~~是否用 OpenSpec 组织开发文档~~ → 不用。产出的 agent 指令文件和
+      slash command 会污染公开仓库的门面，SHALL/WHEN/THEN 文体也不适合对外阅读。
 
 ## 9. 下一步
 
-先落地 `add` + `explain` + `recall` 三个命令加本目录规范，
-不做 `concepts/`、lint、embedding。用真实材料跑一周，
-重点验证两件事：§5.3 的 token 估算是否成立，以及画像那层到底立不立得住。
+先落地 `explain` + `recall` 两个命令加本笔记格式，
+不做 `concepts/`、`ask`、lint、间隔重复。
+
+用真实材料跑一周，重点验证两件事：
+
+1. §5.3 那三个数字到底是多少。
+2. 画像那层立不立得住——即"这像我自己说话"的感觉能不能稳定复现。
 
 真正的设计约束会在那一周暴露出来，其余设计都等它。
 
